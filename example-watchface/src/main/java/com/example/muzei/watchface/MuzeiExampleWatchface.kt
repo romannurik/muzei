@@ -29,6 +29,8 @@ import androidx.core.content.ContextCompat
 import androidx.wear.complications.DefaultComplicationProviderPolicy
 import androidx.wear.complications.SystemProviders
 import androidx.wear.complications.data.ComplicationType
+import androidx.wear.watchface.CanvasComplication
+import androidx.wear.watchface.CanvasComplicationFactory
 import androidx.wear.watchface.CanvasType
 import androidx.wear.watchface.Complication
 import androidx.wear.watchface.ComplicationsManager
@@ -41,7 +43,6 @@ import androidx.wear.watchface.WatchState
 import androidx.wear.watchface.complications.rendering.CanvasComplicationDrawable
 import androidx.wear.watchface.complications.rendering.ComplicationDrawable
 import androidx.wear.watchface.style.CurrentUserStyleRepository
-import androidx.wear.watchface.style.UserStyleSchema
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -54,15 +55,12 @@ import kotlinx.coroutines.launch
  */
 class MuzeiExampleWatchface : WatchFaceService() {
 
-    override suspend fun createWatchFace(
-        surfaceHolder: SurfaceHolder,
-        watchState: WatchState
-    ): WatchFace {
-        // This example uses a single, fixed complication to show the time and date
-        // rather than manually drawing the time
-        val timeComplication = Complication.createBackgroundComplicationBuilder(
-            0,
-            CanvasComplicationDrawable(ComplicationDrawable(this).apply {
+    private inner class TimeComplicationFactory : CanvasComplicationFactory {
+        override fun create(
+            watchState: WatchState,
+            invalidateCallback: CanvasComplication.InvalidateCallback
+        ): CanvasComplication {
+            val drawable = ComplicationDrawable(this@MuzeiExampleWatchface).apply {
                 activeStyle.run {
                     titleSize = resources.getDimensionPixelSize(R.dimen.title_size)
                     textSize = resources.getDimensionPixelSize(R.dimen.text_size)
@@ -71,30 +69,44 @@ class MuzeiExampleWatchface : WatchFaceService() {
                     titleSize = resources.getDimensionPixelSize(R.dimen.title_size)
                     textSize = resources.getDimensionPixelSize(R.dimen.text_size)
                 }
-            }, watchState),
+            }
+            return CanvasComplicationDrawable(drawable, watchState, invalidateCallback)
+        }
+    }
+
+    override fun createComplicationsManager(
+        currentUserStyleRepository: CurrentUserStyleRepository
+    ): ComplicationsManager {
+        // This example uses a single, fixed complication to show the time and date
+        // rather than manually drawing the time
+        val timeComplication = Complication.createBackgroundComplicationBuilder(
+            0,
+            TimeComplicationFactory(),
             listOf(ComplicationType.SHORT_TEXT),
             DefaultComplicationProviderPolicy(SystemProviders.PROVIDER_TIME_AND_DATE)
         ).setFixedComplicationProvider(true).build()
 
-        // Now build the components needed for the WatchFace
-        val userStyleRepository = CurrentUserStyleRepository(
-            UserStyleSchema(listOf())
-        )
-        val complicationsManager = ComplicationsManager(
+        return ComplicationsManager(
             listOf(timeComplication),
-            userStyleRepository
+            currentUserStyleRepository
         )
+    }
+
+    override suspend fun createWatchFace(
+        surfaceHolder: SurfaceHolder,
+        watchState: WatchState,
+        complicationsManager: ComplicationsManager,
+        currentUserStyleRepository: CurrentUserStyleRepository
+    ): WatchFace {
         val renderer = MuzeiExampleRenderer(
             surfaceHolder,
-            userStyleRepository,
+            currentUserStyleRepository,
             watchState,
             complicationsManager
         )
         return WatchFace(
             WatchFaceType.DIGITAL,
-            userStyleRepository,
             renderer,
-            complicationsManager
         ).setLegacyWatchFaceStyle(
             WatchFace.LegacyWatchFaceOverlayStyle(
                 WatchFaceStyle.PROTECT_STATUS_BAR or
@@ -106,12 +118,12 @@ class MuzeiExampleWatchface : WatchFaceService() {
 
     private inner class MuzeiExampleRenderer(
         surfaceHolder: SurfaceHolder,
-        userStyleRepository: CurrentUserStyleRepository,
+        currentUserStyleRepository: CurrentUserStyleRepository,
         watchState: WatchState,
         private val complicationsManager: ComplicationsManager
     ) : Renderer.CanvasRenderer(
         surfaceHolder,
-        userStyleRepository,
+        currentUserStyleRepository,
         watchState,
         CanvasType.HARDWARE,
         32 // as a ~static watchface, we don't need 60fps
@@ -141,7 +153,7 @@ class MuzeiExampleWatchface : WatchFaceService() {
             } ?: run {
                 canvas.drawRect(bounds, backgroundPaint)
             }
-            complicationsManager[0]?.render(canvas, calendar, renderParameters)
+            complicationsManager.getBackgroundComplication()?.render(canvas, calendar, renderParameters)
         }
 
         override fun renderHighlightLayer(canvas: Canvas, bounds: Rect, calendar: Calendar) {
